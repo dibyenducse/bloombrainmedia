@@ -38,6 +38,8 @@ export function companyView(db: Ledger) {
       name: w.name,
       active: !!db.users[id],
       hourlyRate: w.hourlyRate ?? 25000,
+      settingsVersion: w.settingsVersion ?? 0,
+      opening: w.opening,
       balance: t.balance,
       minutes: t.minutes,
       earned: t.earned,

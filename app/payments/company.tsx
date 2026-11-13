@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import type { CompanyView } from "@/lib/payments/company";
+import OpeningInput from "./opening-input";
 
 const bdt = (p: number) =>
   new Intl.NumberFormat("en-BD", { style: "currency", currency: "BDT", maximumFractionDigits: 0 }).format(p / 100);
@@ -34,7 +35,7 @@ type Project = CompanyView["projects"][number];
 // Client income has no date of its own: count it in the delivery month, else the last work month.
 const incomeMonth = (p: Project) => (p.deliveredAt || p.lastDate || p.createdAt).slice(0, 7);
 
-export default function Company({ onOpenWorker }: { onOpenWorker: (id: string) => void }) {
+export default function Company({ onViewWorker }: { onViewWorker: (id: string) => void }) {
   const [data, setData] = useState<CompanyView | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -48,6 +49,9 @@ export default function Company({ onOpenWorker }: { onOpenWorker: (id: string) =
   const [addingExpense, setAddingExpense] = useState(false);
   const [expenseId, setExpenseId] = useState("");
   const [rateEdit, setRateEdit] = useState(false);
+  const [addingWorker, setAddingWorker] = useState(false);
+  const [workerEdit, setWorkerEdit] = useState("");
+  const [setup, setSetup] = useState<{ name: string; url: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +84,7 @@ export default function Company({ onOpenWorker }: { onOpenWorker: (id: string) =
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "Could not save.");
+      if (d.setupUrl) setSetup({ name: d.name, url: d.setupUrl });
       if (d.company) setData(d);
       else await load();
       if (done) setNotice(done);
@@ -346,7 +351,93 @@ export default function Company({ onOpenWorker }: { onOpenWorker: (id: string) =
       </section>
 
       <section className="pay-panel">
-        <h2>Workers</h2>
+        <div className="pay-toolbar">
+          <h2>Workers</h2>
+          <button
+            className="pay-primary"
+            onClick={() => {
+              setAddingWorker(!addingWorker);
+              setSetup(null);
+            }}
+          >
+            + Add worker
+          </button>
+        </div>
+        {addingWorker && (
+          <form
+            className="pay-gridform pay-entry"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const f = new FormData(e.currentTarget);
+              if (
+                await send(
+                  {
+                    action: "addWorker",
+                    name: f.get("name"),
+                    email: f.get("email"),
+                    hourlyRate: Math.round(Number(f.get("hourlyRate")) * 100),
+                    amount: -Math.round(Number(f.get("amount")) * 100),
+                    date: f.get("date"),
+                  },
+                  "Worker added. Send them the private setup link below.",
+                )
+              )
+                setAddingWorker(false);
+            }}
+          >
+            <h2 className="pay-wide">New worker</h2>
+            <label>
+              Worker name
+              <input name="name" required maxLength={100} />
+            </label>
+            <label>
+              Worker email
+              <input name="email" type="email" required maxLength={254} />
+            </label>
+            <label>
+              Hourly rate (BDT)
+              <input name="hourlyRate" type="number" defaultValue="250" min="0.01" max="1000000" step="0.01" required />
+            </label>
+            <OpeningInput />
+            <label>
+              As of date
+              <input name="date" type="date" defaultValue={day()} required />
+            </label>
+            <p className="pay-muted pay-wide">
+              The worker signs in at bloombrainmedia.com/worker and sees only their own projects, hours and payments.
+            </p>
+            <div className="pay-actions pay-wide">
+              <button className="pay-primary" disabled={busy}>
+                Create worker & setup link
+              </button>
+              <button type="button" onClick={() => setAddingWorker(false)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+        {setup && (
+          <div className="pay-setup" role="status">
+            <p>
+              Private setup link for <b>{setup.name}</b> · valid for 14 days and shown only once. Send it only to this
+              worker.
+            </p>
+            <div className="pay-inline">
+              <input aria-label="Setup link" readOnly value={setup.url} onFocus={(e) => e.target.select()} />
+              <button
+                onClick={() =>
+                  navigator.clipboard
+                    .writeText(setup.url)
+                    .then(() => setNotice("Setup link copied."))
+                    .catch(() => setNotice("Select the link and copy it manually."))
+                }
+              >
+                Copy
+              </button>
+              <button onClick={() => setSetup(null)}>✕</button>
+            </div>
+          </div>
+        )}
         <div className="pay-table">
           <table>
             <thead>
@@ -378,13 +469,79 @@ export default function Company({ onOpenWorker }: { onOpenWorker: (id: string) =
                   </td>
                   <td>{w.lastPayment ? `${bdt(w.lastPayment.amount)} · ${w.lastPayment.date}` : "None yet"}</td>
                   <td>
-                    <button onClick={() => onOpenWorker(w.id)}>Open account</button>
+                    <div className="pay-row-actions">
+                      <button className="pay-primary" onClick={() => onViewWorker(w.id)}>
+                        View as worker
+                      </button>
+                      <button onClick={() => setWorkerEdit(workerEdit === w.id ? "" : w.id)}>Rate & balance</button>
+                      {!w.active && (
+                        <button disabled={busy} onClick={() => void send({ action: "inviteWorker", worker: w.id }, "New setup link created.")}>
+                          Setup link
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {(() => {
+          const w = data.workers.find((x) => x.id === workerEdit);
+          if (!w) return null;
+          return (
+            <form
+              key={w.id + w.settingsVersion}
+              className="pay-gridform pay-entry"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget);
+                if (
+                  await send(
+                    {
+                      action: "workerSettings",
+                      worker: w.id,
+                      settingsVersion: w.settingsVersion,
+                      hourlyRate: Math.round(Number(f.get("hourlyRate")) * 100),
+                      amount: -Math.round(Number(f.get("amount")) * 100),
+                      date: f.get("date"),
+                      note: f.get("note"),
+                    },
+                    `${w.name}: rate and opening balance saved. Existing hours keep their original rate.`,
+                  )
+                )
+                  setWorkerEdit("");
+              }}
+            >
+              <h2 className="pay-wide">{w.name} · rate & opening balance</h2>
+              <label>
+                Hourly rate (BDT)
+                <input name="hourlyRate" type="number" min="0.01" max="1000000" step="0.01" defaultValue={w.hourlyRate / 100} required />
+              </label>
+              <OpeningInput amount={w.opening?.amount || 0} />
+              <label>
+                As of date
+                <input name="date" type="date" defaultValue={w.opening?.date || day()} required />
+              </label>
+              <label>
+                Note
+                <input name="note" maxLength={300} defaultValue={w.opening?.note || ""} placeholder="Previous account closing balance" />
+              </label>
+              <p className="pay-muted pay-wide">
+                A new rate applies to hours logged from now on. The opening balance is the due or advance carried over
+                before this system; don’t re-enter old work or payments.
+              </p>
+              <div className="pay-actions pay-wide">
+                <button className="pay-primary" disabled={busy}>
+                  Save
+                </button>
+                <button type="button" onClick={() => setWorkerEdit("")}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          );
+        })()}
       </section>
 
       <section className="pay-panel">

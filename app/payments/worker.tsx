@@ -38,13 +38,17 @@ export default function WorkerDashboard({
   send,
   onDownload,
   onPassword,
+  admin = false,
 }: {
   data: WorkerData;
   busy: boolean;
   send: (body: object) => Promise<boolean>;
   onDownload: () => void;
-  onPassword: () => void;
+  onPassword?: () => void;
+  // Admin "view as worker": same page, plus edit/void on every entry.
+  admin?: boolean;
 }) {
+  const canEdit = (e: Entry) => !e.voided && (admin || e.by !== "admin");
   const [sheet, setSheet] = useState<Sheet>(null);
   const [draft, setDraft] = useState("");
   const [filter, setFilter] = useState<"open" | "completed" | "all">("open");
@@ -310,7 +314,7 @@ export default function WorkerDashboard({
                         <span>{nice(e.date)}</span>
                         <b>{hm(e.minutes)}</b>
                         <em>{e.description}</em>
-                        {e.by !== "admin" && (
+                        {canEdit(e) && (
                           <button className="wk-link" onClick={() => open({ kind: "hours", entry: e })}>
                             Edit
                           </button>
@@ -370,13 +374,27 @@ export default function WorkerDashboard({
                       {e.kind === "work" ? bdt(e.amount) : e.usd ? `$${e.usd / 100} × ${(e.usdRate || 0) / 100}` : ""}
                     </small>
                   </div>
-                  {!e.voided && e.by !== "admin" && (
-                    <button
-                      className="wk-link"
-                      onClick={() => open(e.kind === "work" ? { kind: "hours", entry: e } : { kind: "payment", entry: e })}
-                    >
-                      Edit
-                    </button>
+                  {canEdit(e) && (
+                    <span className="wk-row-actions">
+                      <button
+                        className="wk-link"
+                        onClick={() => open(e.kind === "work" ? { kind: "hours", entry: e } : { kind: "payment", entry: e })}
+                      >
+                        Edit
+                      </button>
+                      {admin && (
+                        <button
+                          className="wk-link"
+                          disabled={busy}
+                          onClick={() =>
+                            confirm("Void this entry? It stays in history but is excluded from totals.") &&
+                            void send({ action: "void", id: e.id, version: e.version })
+                          }
+                        >
+                          Void
+                        </button>
+                      )}
+                    </span>
                   )}
                 </li>
               ))}
@@ -426,7 +444,7 @@ export default function WorkerDashboard({
       </section>
 
       <div className="wk-footer">
-        <button onClick={onPassword}>Change password</button>
+        {onPassword && <button onClick={onPassword}>Change password</button>}
         <button onClick={onDownload}>Download my records</button>
         <span>Amounts in BDT · Bangladesh time · Synced {new Date(data.syncedAt).toLocaleTimeString()}</span>
       </div>
