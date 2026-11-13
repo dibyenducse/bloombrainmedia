@@ -11,7 +11,14 @@ person only their own link. Activation requires matching email, token, and a new
 sessions are random, hashed server-side, HttpOnly, Secure, SameSite Strict, seven
 days. Password changes revoke other sessions. No outbound email is configured.
 
-Storage: `$LEDGER_DATA_DIR`, or `$HOME/.bloombrain-private/payments`. This must be
+Storage (production): Supabase, enabled by the server-only variables SUPABASE_URL and
+SUPABASE_SERVICE_ROLE_KEY. The ledger is one JSON document in `ledger_store`; writes
+use a revision compare-and-swap (`ledger_commit`, see supabase/schema.sql) and retry
+on conflict, and keep the previous document in `ledger_backups` (latest 100). An empty
+table is seeded once from the file ledger below. `node scripts/test-ledger-storage.mjs`
+checks either backend locally (concurrency, voids, sessions).
+
+File storage (fallback when Supabase is not configured): `$LEDGER_DATA_DIR`, or `$HOME/.bloombrain-private/payments`. This must be
 private, writable, and persistent across deployments, never under public_html,
 public/, .next/, or a versioned build directory. Single Hostinger instance with
 shared filesystem required; not for distributed/ephemeral replicas. Never move

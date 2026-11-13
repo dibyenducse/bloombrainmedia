@@ -17,10 +17,21 @@ function initialOpening():Ledger['opening']{
  if(!amount||!date||!Number.isSafeInteger(n)||Math.abs(n)>100000000||!/^\d{4}-\d{2}-\d{2}$/.test(date)||new Date(date).toISOString().slice(0,10)!==date)throw new Error('Invalid opening configuration');
  return {amount:n,date,note:'Owner-confirmed balance carried forward from the previous sheet'};
 }
-const empty=():Ledger=>({version:1,users:{},sessions:[],attempts:{},opening:initialOpening(),entries:[],audit:[]});
+export const empty=():Ledger=>({version:1,users:{},sessions:[],attempts:{},opening:initialOpening(),entries:[],audit:[]});
+// Supabase is the primary store when SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are
+// set (see lib/payments/supabase.ts). Without them the private file store is used.
+export async function transaction<T>(fn:(db:Ledger)=>Promise<T>|T):Promise<T>{
+ const {supabaseConfigured,supabaseTransaction}=await import('./supabase');
+ return supabaseConfigured()?supabaseTransaction(fn):fileTransaction(fn);
+}
+// Existing file ledger, used to seed Supabase once when its table is still empty.
+export async function readFileLedger():Promise<Ledger|null>{
+ try{const db=JSON.parse(await fs.readFile(filename,'utf8'));if(db.version!==1||!Array.isArray(db.entries))throw new Error('Invalid ledger');return db;}
+ catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return null;throw e;}
+}
 // A shared filesystem lock serializes writers across Node processes. A live lock is
 // never stolen; crashed owners can be recovered after their PID no longer exists.
-export async function transaction<T>(fn:(db:Ledger)=>Promise<T>|T):Promise<T>{
+async function fileTransaction<T>(fn:(db:Ledger)=>Promise<T>|T):Promise<T>{
  await fs.mkdir(directory,{recursive:true,mode:0o700});
  const lock=path.join(directory,'.lock');let acquired=false;
  for(let i=0;i<100;i++){
