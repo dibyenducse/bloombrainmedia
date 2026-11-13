@@ -60,7 +60,7 @@ export async function POST(req:NextRequest){
     const id='worker-'+randomUUID(),token=randomBytes(32).toString('hex');
     workers(db)[id]={hourlyRate:integer(b.hourlyRate??25000,1,100000000),settingsVersion:0,name,emailHash:digest(email),inviteHash:digest(token),expires:Date.now()+14*86400000,opening:{amount:integer(b.amount,-100000000,100000000),date:date(b.date),note:'Opening balance set by administrator'}};
     audit(db,role,'Worker added',null,{name},id);
-    return respond({...view(db,role,id),setupUrl:allowed+'/payments#invite='+token});
+    return respond({...view(db,role,id),setupUrl:allowed+'/worker#invite='+token});
    }
    // Company-wide admin actions (spend, settings, client income). Answer with the company view.
    if(['saveExpense','voidExpense','companySettings','projectIncome'].includes(b.action)){
@@ -110,7 +110,7 @@ export async function POST(req:NextRequest){
     if(db.users[workerId])throw new InputError('This worker is already activated. Use the sign-in page.',409);
     const token=randomBytes(32).toString('hex');profile.inviteHash=digest(token);profile.expires=Date.now()+14*86400000;
     audit(db,role,'Worker invitation renewed',null,{expires:profile.expires},workerId);
-    return respond({...view(db,role,workerId),setupUrl:allowed+'/payments#invite='+token});
+    return respond({...view(db,role,workerId),setupUrl:allowed+'/worker#invite='+token});
    }
    if(b.action==='workerSettings'){
     if(role!=='admin')throw new InputError('Only the administrator can change rates and opening balances.',403);
