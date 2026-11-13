@@ -1,6 +1,7 @@
 "use client";
 import Reports from "./reports";
 import Company from "./company";
+import WorkerDashboard from "./worker";
 import Projects, { WorkTarget } from "./projects";
 import OpeningInput from "./opening-input";
 import type { SheetHistory } from "@/lib/payments/history";
@@ -33,7 +34,9 @@ const day = () =>
     day: "2-digit",
   }).format(new Date());
 
-export default function Ledger() {
+// mode: "admin" (/admin), "worker" (/worker) or "auto" (/payments, old links).
+// Sign-in is shared; after sign-in each role is sent to its own page.
+export default function Ledger({ mode = "auto" }: { mode?: "admin" | "worker" | "auto" }) {
   const [workProject, setWorkProject] = useState("");
   const [area, setArea] = useState<"company" | "worker">("company");
   const [currency, setCurrency] = useState<"BDT" | "USD">("BDT");
@@ -194,6 +197,11 @@ export default function Ledger() {
     URL.revokeObjectURL(u);
   }
   const formKind = edit?.kind || (tab === "payment" ? "payment" : "work");
+  const home = data ? (data.role === "admin" ? "/admin" : "/worker") : "";
+  const wrongPage = !!data && (mode === "auto" || (mode === "admin") !== (data.role === "admin"));
+  useEffect(() => {
+    if (wrongPage) location.replace(home + location.hash);
+  }, [wrongPage, home]);
   return (
     <div className="pay-app">
       <header className="pay-head">
@@ -231,7 +239,7 @@ export default function Ledger() {
             {notice}
           </div>
         )}
-        {loading ? (
+        {loading || wrongPage ? (
           <p>Loading your workspace…</p>
         ) : !data ? (
           <section className="pay-login">
@@ -281,6 +289,12 @@ export default function Ledger() {
             </form>
           </section>
         ) : (
+          data.role !== "admin" ? (
+            <>
+              <WorkerDashboard data={data} busy={busy} send={send} onDownload={download} onPassword={() => setPw(!pw)} />
+              {pw && <PasswordForm busy={busy} send={send} setError={setError} setNotice={setNotice} close={() => setPw(false)} />}
+            </>
+          ) : (
           <>
             <div className="pay-title">
               <div>
@@ -991,6 +1005,7 @@ export default function Ledger() {
               </form>
             )}
           </>
+          )
         )}
       </main>
     </div>
@@ -1035,5 +1050,53 @@ function UsdAmount({ usd, rate }: { usd?: number; rate?: number }) {
         {taka > 0 ? `Worker receives ${taka.toLocaleString("en-BD")} BDT in their account.` : "Enter dollars and rate."}
       </p>
     </>
+  );
+}
+
+function PasswordForm({
+  busy,
+  send,
+  setError,
+  setNotice,
+  close,
+}: {
+  busy: boolean;
+  send: (body: object) => Promise<boolean>;
+  setError: (s: string) => void;
+  setNotice: (s: string) => void;
+  close: () => void;
+}) {
+  return (
+    <form
+      className="pay-panel pay-gridform wk-password"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const f = new FormData(e.currentTarget);
+        if (f.get("password") !== f.get("confirm")) {
+          setError("Passwords do not match.");
+          return;
+        }
+        if (await send({ action: "password", oldPassword: f.get("old"), password: f.get("password") })) {
+          close();
+          setNotice("Password updated. Other sessions signed out.");
+        }
+      }}
+    >
+      <label>
+        Current password
+        <input name="old" type="password" required autoComplete="current-password" />
+      </label>
+      <label>
+        New password
+        <input name="password" type="password" minLength={12} maxLength={200} required autoComplete="new-password" />
+      </label>
+      <label>
+        Confirm new password
+        <input name="confirm" type="password" required autoComplete="new-password" />
+      </label>
+      <button className="pay-primary" disabled={busy}>
+        Update password
+      </button>
+    </form>
   );
 }
