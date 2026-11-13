@@ -97,6 +97,9 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
     }
   }
 
+  // Admin sees money in USD. Taka amounts are converted at the company rate;
+  // payments that were sent in USD keep their real dollar amount.
+  const toUsd = (paisa: number) => (data ? Math.round((paisa * 100) / data.usdRate) : 0);
   const inPeriod = useCallback((date: string | null | undefined) => !!date && (allTime || date.startsWith(period)), [
     allTime,
     period,
@@ -121,6 +124,7 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
       billsUsd,
       paid: payments.reduce((a, e) => a + e.amount, 0),
       paidUsd: payments.reduce((a, e) => a + (e.usd || 0), 0),
+      paidTotalUsd: payments.reduce((a, e) => a + (e.usd ?? Math.round((e.amount * 100) / data.usdRate)), 0),
       spend,
       earned,
       net: earned - billsUsd - spend,
@@ -225,7 +229,7 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
             <p className="pay-eyebrow">BLOOMBRAIN COMPANY</p>
             <h2>Company overview · {periodName}</h2>
           </div>
-          <div className="pay-actions">
+          <div className="pay-period">
             <label>
               Month
               <input
@@ -235,8 +239,8 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
                 onChange={(e) => e.target.value && setPeriod(e.target.value)}
               />
             </label>
-            <button aria-pressed={allTime} onClick={() => setAllTime(!allTime)}>
-              {allTime ? "Showing all time" : "All time"}
+            <button className="pay-alltime" aria-pressed={allTime} onClick={() => setAllTime(!allTime)}>
+              All time
             </button>
           </div>
         </div>
@@ -248,13 +252,15 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
           </article>
           <article>
             <span>Worker bills</span>
-            <strong>{bdt(summary.bills)}</strong>
-            <small>≈ {usd(summary.billsUsd)} at {data.usdRate / 100} BDT/USD</small>
+            <strong>{usd(summary.billsUsd)}</strong>
+            <small>Hours × rate, at {data.usdRate / 100} BDT/USD</small>
           </article>
           <article>
             <span>Paid to workers</span>
-            <strong>{bdt(summary.paid)}</strong>
-            <small>{summary.paidUsd ? `incl. ${usd(summary.paidUsd)} sent in USD` : "All recorded payments"}</small>
+            <strong>{usd(summary.paidTotalUsd)}</strong>
+            <small>
+              {bdt(summary.paid)} paid{summary.paidUsd ? ` · ${usd(summary.paidUsd)} sent in USD` : ""}
+            </small>
           </article>
           <article>
             <span>Company spend</span>
@@ -457,17 +463,26 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
                     <b>{w.name}</b>
                     {!w.active && <small>Setup pending</small>}
                   </td>
-                  <td>{bdt(w.hourlyRate)}/h</td>
+                  <td>{usd(toUsd(w.hourlyRate))}/h</td>
                   <td>{time(w.monthMinutes)}</td>
                   <td>
                     <b className={w.balance > 0 ? "pay-due" : ""}>
-                      {w.balance > 0 ? `To pay ${bdt(w.balance)}` : w.balance < 0 ? `Advance ${bdt(-w.balance)}` : "Settled"}
+                      {w.balance > 0 ? `To pay ${usd(toUsd(w.balance))}` : w.balance < 0 ? `Advance ${usd(toUsd(-w.balance))}` : "Settled"}
                     </b>
                     <small>
-                      Earned {bdt(w.earned)} · Paid {bdt(w.paid)}
+                      Earned {usd(toUsd(w.earned))} · Paid {bdt(w.paid)}
                     </small>
                   </td>
-                  <td>{w.lastPayment ? `${bdt(w.lastPayment.amount)} · ${w.lastPayment.date}` : "None yet"}</td>
+                  <td>
+                    {w.lastPayment ? (
+                      <>
+                        {bdt(w.lastPayment.amount)}
+                        <small>{w.lastPayment.date}</small>
+                      </>
+                    ) : (
+                      "None yet"
+                    )}
+                  </td>
                   <td>
                     <div className="pay-row-actions">
                       <button className="pay-primary" onClick={() => onViewWorker(w.id)}>
@@ -679,7 +694,7 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
                     </small>
                   </td>
                   <td>{time(p.minutes)}</td>
-                  <td>{bdt(p.cost)}</td>
+                  <td>{usd(toUsd(p.cost))}</td>
                   <td>
                     <IncomeCell project={p} busy={busy} send={send} />
                   </td>
@@ -714,7 +729,7 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
                   <td>{c.projects}</td>
                   <td>{[...c.workers].filter(Boolean).join(", ")}</td>
                   <td>{time(c.minutes)}</td>
-                  <td>{bdt(c.cost)}</td>
+                  <td>{usd(toUsd(c.cost))}</td>
                   <td>{c.income ? usd(c.income) : "—"}</td>
                 </tr>
               ))}
