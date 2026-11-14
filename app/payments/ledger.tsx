@@ -159,7 +159,7 @@ export default function Ledger({ mode = "auto" }: { mode?: "admin" | "worker" | 
     <div className="pay-app">
       <header className="pay-head">
         <a href="/" aria-label="BloomBrain home">
-          <img src="/brand/bloombrain-horizontal.png" alt="BloomBrain Media" />
+          <img src="/brand/bloombrain-media-logo.png" alt="BloomBrain Media" />
         </a>
         <span>PRIVATE WORKSPACE</span>
         {data && (
