@@ -100,6 +100,25 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
   // Admin sees money in USD. Taka amounts are converted at the company rate;
   // payments that were sent in USD keep their real dollar amount.
   const toUsd = (paisa: number) => (data ? Math.round((paisa * 100) / data.usdRate) : 0);
+  // Client billing is estimated from hours (hours × client rate) unless a project has
+  // an actual client payment entered; that amount then replaces the estimate and is
+  // counted in the project's delivery month. The platform fee comes off the gross.
+  const clientGross = useCallback(
+    (inRange: (date: string) => boolean, projectFilter: (p: Project) => boolean = () => true) => {
+      if (!data) return 0;
+      const actual = new Map(data.projects.filter((p) => p.clientPaidUsd != null).map((p) => [p.id, p]));
+      const allowed = new Set(data.projects.filter(projectFilter).map((p) => p.id));
+      let total = 0;
+      for (const e of data.entries)
+        if (e.kind === "work" && inRange(e.date) && !actual.has(e.projectId || "") && (!e.projectId || allowed.has(e.projectId)))
+          total += Math.round((e.minutes * data.clientRate) / 60);
+      for (const p of actual.values())
+        if (allowed.has(p.id) && inRange(incomeMonth(p) + "-01")) total += p.clientPaidUsd || 0;
+      return total;
+    },
+    [data],
+  );
+  const feeOf = useCallback((gross: number) => (data ? Math.round((gross * data.feeBps) / 10000) : 0), [data]);
   const inPeriod = useCallback((date: string | null | undefined) => !!date && (allTime || date.startsWith(period)), [
     allTime,
     period,
@@ -110,11 +129,11 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
     const work = data.entries.filter((e) => e.kind === "work" && inPeriod(e.date));
     const payments = data.entries.filter((e) => e.kind === "payment" && inPeriod(e.date));
     const expenses = data.expenses.filter((x) => !x.voided && inPeriod(x.date));
-    const income = data.projects.filter((p) => p.clientPaidUsd && inPeriod(incomeMonth(p) + "-01"));
     const bills = work.reduce((a, e) => a + e.amount, 0);
     const billsUsd = Math.round((bills * 100) / data.usdRate);
     const spend = expenses.reduce((a, x) => a + x.usd, 0);
-    const earned = income.reduce((a, p) => a + (p.clientPaidUsd || 0), 0);
+    const gross = clientGross((d) => inPeriod(d));
+    const fee = feeOf(gross);
     const byCategory = new Map<string, number>();
     for (const x of expenses) byCategory.set(x.category, (byCategory.get(x.category) || 0) + x.usd);
     return {
@@ -126,12 +145,14 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
       paidUsd: payments.reduce((a, e) => a + (e.usd || 0), 0),
       paidTotalUsd: payments.reduce((a, e) => a + (e.usd ?? Math.round((e.amount * 100) / data.usdRate)), 0),
       spend,
-      earned,
-      net: earned - billsUsd - spend,
+      gross,
+      fee,
+      received: gross - fee,
+      net: gross - fee - billsUsd - spend,
       expenses,
       byCategory: [...byCategory.entries()].sort((a, b) => b[1] - a[1]),
     };
-  }, [data, inPeriod]);
+  }, [data, inPeriod, clientGross, feeOf]);
 
   const chart = useMemo(() => {
     if (!data) return [];
@@ -157,12 +178,11 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
       row["Expenses"] = Math.round(
         data.expenses.filter((x) => !x.voided && x.date.startsWith(m)).reduce((a, x) => a + x.usd, 0) / 100,
       );
-      row["Client income"] = Math.round(
-        data.projects.filter((p) => incomeMonth(p) === m).reduce((a, p) => a + (p.clientPaidUsd || 0), 0) / 100,
-      );
+      const g = clientGross((d) => d.startsWith(m));
+      row["Client income"] = Math.round((g - feeOf(g)) / 100);
       return row;
     });
-  }, [data]);
+  }, [data, clientGross, feeOf]);
 
   if (!data || !summary)
     return (
@@ -200,11 +220,11 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
   }
   for (const p of data.projects) {
     const used = data.entries.some((e) => e.projectId === p.id && inPeriod(e.date));
-    const paidHere = !!p.clientPaidUsd && inPeriod(incomeMonth(p) + "-01");
-    if (!used && !paidHere) continue;
+    const income = clientGross((d) => inPeriod(d), (x) => x.id === p.id);
+    if (!used && !income) continue;
     const c = clients.get(p.client) || { projects: 0, minutes: 0, cost: 0, income: 0, workers: new Set<string>() };
     if (used) c.projects++;
-    if (paidHere) c.income += p.clientPaidUsd || 0;
+    c.income += income;
     clients.set(p.client, c);
   }
   const clientRows = [...clients.entries()].sort((a, b) => b[1].minutes - a[1].minutes);
@@ -268,21 +288,24 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
             <small>{summary.expenses.length} expense entries</small>
           </article>
           <article>
-            <span>Client income</span>
-            <strong>{usd(summary.earned)}</strong>
-            <small>Optional, entered per project</small>
+            <span>Client billing</span>
+            <strong>{usd(summary.gross)}</strong>
+            <small>
+              You receive {usd(summary.received)} after {data.feeBps / 100}% fee
+            </small>
           </article>
           <article className={summary.net < 0 ? "pay-co-loss" : "pay-co-profit"}>
             <span>Net (USD)</span>
             <strong>{usd(summary.net)}</strong>
-            <small>Income − worker bills − spend</small>
+            <small>Received − worker bills − spend</small>
           </article>
         </div>
         <p className="pay-muted">
           Total cost this period: <b>{usd(summary.billsUsd + summary.spend)}</b> (worker bills ≈ {usd(summary.billsUsd)} +
-          spend {usd(summary.spend)}) · USD rate {data.usdRate / 100} BDT{" "}
+          spend {usd(summary.spend)}) · Client price {usd(data.clientRate)}/hour, Upwork fee {data.feeBps / 100}%, USD rate{" "}
+          {data.usdRate / 100} BDT{" "}
           <button className="pay-link" onClick={() => setRateEdit(!rateEdit)}>
-            change
+            settings
           </button>
         </p>
         {rateEdit && (
@@ -293,8 +316,13 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
               const f = new FormData(e.currentTarget);
               if (
                 await send(
-                  { action: "companySettings", usdRate: Math.round(Number(f.get("rate")) * 100) },
-                  "USD rate saved.",
+                  {
+                    action: "companySettings",
+                    usdRate: Math.round(Number(f.get("rate")) * 100),
+                    clientRate: Math.round(Number(f.get("clientRate")) * 100),
+                    feeBps: Math.round(Number(f.get("fee")) * 100),
+                  },
+                  "Settings saved.",
                 )
               )
                 setRateEdit(false);
@@ -304,8 +332,18 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
               BDT per 1 USD
               <input name="rate" type="number" min="1" max="1000" step="0.01" defaultValue={data.usdRate / 100} required />
             </label>
+            <label>
+              Client price per worker hour (USD)
+              <input name="clientRate" type="number" min="0.01" max="10000" step="0.01" defaultValue={data.clientRate / 100} required />
+            </label>
+            <label>
+              Platform fee (%)
+              <input name="fee" type="number" min="0" max="99" step="0.01" defaultValue={data.feeBps / 100} required />
+            </label>
             <p className="pay-muted pay-wide">
-              Used only to compare taka worker bills with dollar spend and income. Payments sent in USD keep their own rate.
+              Client billing is estimated as worker hours × client price; the platform fee is deducted to get what you
+              receive. A project&apos;s actual client payment, if entered, replaces the estimate. The USD rate converts taka to
+              dollars; payments sent in USD keep their own rate.
             </p>
             <div className="pay-actions pay-wide">
               <button className="pay-primary" disabled={busy}>
@@ -658,7 +696,7 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
                 <th>Timeline</th>
                 <th>Hours</th>
                 <th>Worker cost</th>
-                <th>Client paid</th>
+                <th>Client billing</th>
               </tr>
             </thead>
             <tbody>
@@ -696,7 +734,7 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
                   <td>{time(p.minutes)}</td>
                   <td>{usd(toUsd(p.cost))}</td>
                   <td>
-                    <IncomeCell project={p} busy={busy} send={send} />
+                    <IncomeCell project={p} estimate={Math.round((p.minutes * data.clientRate) / 60)} busy={busy} send={send} />
                   </td>
                 </tr>
               ))}
@@ -717,7 +755,7 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
                 <th>Workers</th>
                 <th>Hours</th>
                 <th>Worker cost</th>
-                <th>Client paid</th>
+                <th>Client billing</th>
               </tr>
             </thead>
             <tbody>
@@ -730,7 +768,10 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
                   <td>{[...c.workers].filter(Boolean).join(", ")}</td>
                   <td>{time(c.minutes)}</td>
                   <td>{usd(toUsd(c.cost))}</td>
-                  <td>{c.income ? usd(c.income) : "—"}</td>
+                  <td>
+                    {c.income ? usd(c.income) : "—"}
+                    {c.income > 0 && <small>You receive {usd(c.income - feeOf(c.income))}</small>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -870,19 +911,31 @@ export default function Company({ onViewWorker }: { onViewWorker: (id: string) =
 
 function IncomeCell({
   project,
+  estimate,
   busy,
   send,
 }: {
   project: Project;
+  estimate: number;
   busy: boolean;
   send: (body: object, done?: string) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState(false);
   if (!editing)
     return (
-      <button className="pay-link" onClick={() => setEditing(true)}>
-        {project.clientPaidUsd ? usd(project.clientPaidUsd) : "+ Add"}
-      </button>
+      <>
+        {project.clientPaidUsd != null ? (
+          <b>{usd(project.clientPaidUsd)}</b>
+        ) : (
+          <span title="Worker hours × client price">≈ {usd(estimate)}</span>
+        )}
+        <small>
+          {project.clientPaidUsd != null ? "actual · " : "estimate · "}
+          <button className="pay-link" onClick={() => setEditing(true)}>
+            {project.clientPaidUsd != null ? "edit" : "set actual"}
+          </button>
+        </small>
+      </>
     );
   return (
     <form
@@ -904,8 +957,8 @@ function IncomeCell({
         type="number"
         min="0"
         step="0.01"
-        aria-label="Client paid (USD)"
-        placeholder="USD"
+        aria-label="Actual client payment (USD), empty to use the estimate"
+        placeholder={`≈ ${estimate / 100}`}
         autoFocus
         defaultValue={project.clientPaidUsd ? project.clientPaidUsd / 100 : ""}
       />

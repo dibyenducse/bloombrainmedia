@@ -6,6 +6,9 @@ import { totals, type Ledger } from "./store";
 //   BDT amounts are integer paisa, USD amounts are integer cents,
 //   usdRate is integer paisa per 1 USD (122.50 BDT/USD -> 12250).
 export const DEFAULT_USD_RATE = 12200;
+// Client billing: US cents per worker hour, and the platform fee in basis points (15% = 1500).
+export const DEFAULT_CLIENT_RATE = 1000;
+export const DEFAULT_FEE_BPS = 1500;
 export const bdtFromUsd = (usdCents: number, usdRate: number) => Math.round((usdCents * usdRate) / 100);
 
 const dhakaDay = () =>
@@ -67,6 +70,8 @@ export function companyView(db: Ledger) {
     role: "admin" as const,
     month,
     usdRate: db.settings?.usdRate ?? DEFAULT_USD_RATE,
+    clientRate: db.settings?.clientRate ?? DEFAULT_CLIENT_RATE,
+    feeBps: db.settings?.feeBps ?? DEFAULT_FEE_BPS,
     workers: workerRows,
     projects,
     entries: live.map((e) => ({

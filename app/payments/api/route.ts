@@ -66,7 +66,7 @@ export async function POST(req:NextRequest){
    if(['saveExpense','voidExpense','companySettings','projectIncome'].includes(b.action)){
     if(role!=='admin')throw new InputError('Only the administrator can do this.',403);
     db.expenses??=[];db.settings??={};
-    if(b.action==='companySettings'){const before={...db.settings};db.settings.usdRate=integer(b.usdRate,100,100000000);audit(db,role,'Company USD rate updated',before,{...db.settings},'company');}
+    if(b.action==='companySettings'){const before={...db.settings};if(b.usdRate!==undefined)db.settings.usdRate=integer(b.usdRate,100,100000000);if(b.clientRate!==undefined)db.settings.clientRate=integer(b.clientRate,1,100000000);if(b.feeBps!==undefined)db.settings.feeBps=integer(b.feeBps,0,9900);audit(db,role,'Company settings updated',before,{...db.settings},'company');}
     if(b.action==='projectIncome'){
      const project=(db.projects||[]).find(p=>p.id===b.id);if(!project)throw new InputError('Project not found.',404);
      if(project.version!==b.version)throw new InputError('Project changed. Refresh and try again.',409);
